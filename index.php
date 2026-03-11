@@ -1,52 +1,66 @@
 <?php
 // ============================================================
-//  EduQueue – QR Landing Page
-//  URL: school.edu/eduqueue/?session=TOKEN
+//  EduQueue – Admin Actions Handler
 // ============================================================
-require_once __DIR__ . '/config.php';
-require_once __DIR__ . '/includes/auth.php';
-require_once __DIR__ . '/includes/queue.php';
+require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/security.php';
+require_once __DIR__ . '/../includes/queue.php';
+require_once __DIR__ . '/../includes/db.php';
 
-startSecureSession();
+requireLogin('admin');
+verifyCsrf();
 
-$token   = trim($_GET['session'] ?? '');
-$session = $token ? getActiveSession($token) : null;
+$action = $_POST['action'] ?? '';
+$pdo    = getDB();
 
-// If no token, redirect to today's session creator (admin use) or show error
-if (!$token) {
-    // Redirect to login which will pick up no session
-    header('Location: ' . BASE_URL . '/login.php');
-    exit;
-}
+switch ($action) {
 
-if (!$session) {
-    // Invalid or expired QR code
-    ?><!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Invalid QR – <?= SCHOOL_NAME ?></title>
-<link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/style.css">
-</head>
-<body style="background:var(--navy);display:flex;align-items:center;justify-content:center;min-height:100vh;">
-<div style="background:#fff;border-radius:16px;padding:2.5rem;max-width:380px;text-align:center;box-shadow:0 16px 48px rgba(0,0,0,.25)">
-  <div style="font-size:3rem;margin-bottom:1rem">❌</div>
-  <h2 style="color:var(--navy);margin-bottom:.5rem">Invalid QR Code</h2>
-  <p style="color:var(--gray-500);font-size:.9rem">This QR code has expired or is no longer valid.<br>Please scan today's QR code posted at the office.</p>
-</div>
-</body></html>
-    <?php
-    exit;
-}
+    case 'regenerate_qr':
+        // Invalidate current session token (keep data) and create fresh token + QR
+        $session = getOrCreateTodaySession();
+        $newToken = bin2hex(random_bytes(16));
+        $pdo->prepare('UPDATE queue_sessions SET session_token=? WHERE id=?')
+            ->execute([$newToken, $session['id']]);
+        header('Location: ' . BASE_URL . '/admin/index.php?msg=qr_regenerated');
+        break;
 
-// Session valid — store token and redirect
-$_SESSION['qr_session_token'] = $token;
-$_SESSION['qr_session_id']    = $session['id'];
+    case 'toggle_dept':
+        $deptId = (int)($_POST['dept_id'] ?? 0);
+        $pdo->prepare('UPDATE departments SET is_open = NOT is_open WHERE id=?')->execute([$deptId]);
+        header('Location: ' . BASE_URL . '/admin/index.php');
+        break;
 
-if (isLoggedIn() && $_SESSION['user_role'] === 'student') {
-    header('Location: ' . BASE_URL . '/queue.php');
-} else {
-    header('Location: ' . BASE_URL . '/login.php?session=' . urlencode($token));
+    case 'end_of_day':
+        // 1. Mark all remaining 'waiting' as 'missed'
+        $session = getOrCreateTodaySession();
+        $pdo->prepare("UPDATE queues SET status='missed', completed_at=NOW() WHERE session_id=? AND status='waiting'")
+            ->execute([$session['id']]);
+
+        // 2. Close current session
+        $pdo->prepare('UPDATE queue_sessions SET is_active=0 WHERE id=?')
+            ->execute([$session['id']]);
+
+        // 3. Generate new session for tomorrow
+        $newToken = bin2hex(random_bytes(16));
+        $tomorrow = date('Y-m-d', strtotime('+1 day'));
+        $pdo->prepare('INSERT INTO queue_sessions (session_token, session_date, is_active, expires_at) VALUES (?,?,0,?)')
+            ->execute([$newToken, $tomorrow, $tomorrow . ' 23:59:59']);
+
+        $newSessionId = (int)$pdo->lastInsertId();
+
+        // 4. Reset counters for tomorrow
+        $depts = $pdo->query('SELECT id FROM departments')->fetchAll();
+        foreach ($depts as $d) {
+            $pdo->prepare('INSERT INTO queue_counters (department_id, session_id, last_issued, current_serving) VALUES (?,?,0,0)
+                           ON DUPLICATE KEY UPDATE session_id=?, last_issued=0, current_serving=0')
+                ->execute([$d['id'], $newSessionId, $newSessionId]);
+        }
+
+        header('Location: ' . BASE_URL . '/admin/index.php?msg=reset_done');
+        break;
+
+    default:
+        header('Location: ' . BASE_URL . '/admin/index.php');
 }
 exit;

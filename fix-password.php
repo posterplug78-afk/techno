@@ -1,15 +1,28 @@
-<?php
-require_once __DIR__ . '/config.php';
-require_once __DIR__ . '/includes/db.php';
+Options -Indexes
+RewriteEngine On
 
-$newPassword = 'Admin@1234';
-$hash = password_hash($newPassword, PASSWORD_BCRYPT, ['cost' => 12]);
+# Block direct access to sensitive files
+<FilesMatch "^(config\.php|schema\.sql|fix-password\.php|\.env)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
 
-$pdo = getDB();
-$pdo->prepare('UPDATE users SET password_hash = ? WHERE email = ?')
-    ->execute([$hash, 'admin@school.edu']);
+# Block access to hidden files (.git, .gitignore, etc.)
+<FilesMatch "^\.">
+    Order allow,deny
+    Deny from all
+</FilesMatch>
 
-echo "✅ Password updated successfully!<br>";
-echo "Email: admin@school.edu<br>";
-echo "Password: " . $newPassword . "<br>";
-echo "<br><strong>Delete this file immediately after logging in!</strong>";
+# Security headers
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# PHP settings
+<IfModule mod_php.c>
+    php_flag display_errors Off
+    php_flag log_errors On
+</IfModule>
