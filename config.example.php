@@ -1,53 +1,92 @@
 <?php
 // ============================================================
-//  EduQueue – Configuration Example
-//  Copy this file to config.php and fill in your own values
+//  EduQueue – Authentication Helpers
 // ============================================================
+require_once __DIR__ . '/db.php';
 
-// ── DATABASE ─────────────────────────────────────────────────
-define('DB_HOST', 'your_db_host');       // e.g. 127.0.0.1 or railway host
-define('DB_PORT', '3306');               // 3306 for online hosts, 3307 for XAMPP
-define('DB_NAME', 'your_db_name');       // e.g. eduqueue
-define('DB_USER', 'your_db_user');       // e.g. root
-define('DB_PASS', 'your_db_password');   // blank for XAMPP default
+function startSecureSession(): void {
+    if (session_status() === PHP_SESSION_NONE) {
+        session_set_cookie_params([
+            'lifetime' => 0,
+            'path'     => '/',
+            'secure'   => false,
+            'httponly' => true,
+            'samesite' => 'Lax',  // Changed from Strict to Lax to fix redirect issues
+        ]);
+        session_start();
+    }
+}
 
-// ── APP ──────────────────────────────────────────────────────
-define('BASE_URL',      'https://your-app-url.railway.app'); // no trailing slash
-define('SCHOOL_NAME',   'Your School Name');
-define('SCHOOL_DOMAIN', '@school.edu');  // only this email domain can register
+function loginUser(string $email, string $password): array {
+    $pdo  = getDB();
+    $stmt = $pdo->prepare('SELECT * FROM users WHERE email = ? AND is_active = 1');
+    $stmt->execute([strtolower(trim($email))]);
+    $user = $stmt->fetch();
 
-// ── SMS (Semaphore – Philippine SMS Gateway) ─────────────────
-// Get your API key from https://semaphore.co
-define('SEMAPHORE_API_KEY',     '');     // paste your API key here
-define('SEMAPHORE_SENDER_NAME', 'SCHOOLQ'); // max 11 chars
+    if (!$user || !password_verify($password, $user['password_hash'])) {
+        return ['success' => false, 'message' => 'Invalid email or password.'];
+    }
 
-// ── reCAPTCHA v3 ─────────────────────────────────────────────
-// Get your keys from https://www.google.com/recaptcha/admin
-define('RECAPTCHA_SITE_KEY',   '');      // paste site key here
-define('RECAPTCHA_SECRET_KEY', '');      // paste secret key here
-define('RECAPTCHA_MIN_SCORE',  0.5);     // 0.0 to 1.0, lower = more lenient
+    // Start session first before regenerating
+    startSecureSession();
 
-// ── QUEUE SETTINGS ───────────────────────────────────────────
-define('SMS_NOTIFY_THRESHOLD', 3);  // send SMS when this many people are ahead
-define('MAX_CALL_ATTEMPTS',    3);  // auto-skip after this many missed calls
+    // Regenerate session ID to prevent fixation
+    session_regenerate_id(true);
 
-// ── RATE LIMITING ─────────────────────────────────────────────
-define('RATE_LIMIT_ATTEMPTS', 3);   // max form submissions per window
-define('RATE_LIMIT_MINUTES',  10);  // time window in minutes
+    // Save all user data into session
+    $_SESSION['user_id']    = (int)$user['id'];
+    $_SESSION['user_role']  = $user['role'];
+    $_SESSION['user_name']  = $user['full_name'];
+    $_SESSION['user_email'] = $user['email'];
 
-// ── TIMEZONE ─────────────────────────────────────────────────
-date_default_timezone_set('Asia/Manila');
-```
+    // Force session write before redirect
+    session_write_close();
 
----
+    return ['success' => true, 'role' => $user['role']];
+}
 
-That's it. You now have two files:
-```
-eduqueue/
-├── config.php          ← your real config (never share or upload this)
-└── config.example.php  ← safe to upload to GitHub (no real passwords)
-```
+function isLoggedIn(): bool {
+    startSecureSession();
+    return isset($_SESSION['user_id']) && !empty($_SESSION['user_role']);
+}
 
-And make sure your `.gitignore` file contains this so `config.php` never gets pushed to GitHub accidentally:
-```
-config.php
+function requireLogin(string $role = ''): void {
+    startSecureSession();
+
+    // Not logged in — redirect to login
+    if (!isset($_SESSION['user_id']) || empty($_SESSION['user_role'])) {
+        header('Location: ' . BASE_URL . '/login.php');
+        exit;
+    }
+
+    // No role restriction
+    if ($role === '') return;
+
+    $sessionRole = $_SESSION['user_role'] ?? '';
+
+    // Admin can access everything
+    if ($sessionRole === 'admin') return;
+
+    // Exact role match
+    if ($sessionRole === $role) return;
+
+    // Deny
+    http_response_code(403);
+    die('Access denied. Your role (' . htmlspecialchars($sessionRole) . ') cannot access this page.');
+}
+
+function currentUser(): array {
+    startSecureSession();
+    return [
+        'id'    => $_SESSION['user_id']    ?? null,
+        'role'  => $_SESSION['user_role']  ?? null,
+        'name'  => $_SESSION['user_name']  ?? null,
+        'email' => $_SESSION['user_email'] ?? null,
+    ];
+}
+
+function logoutUser(): void {
+    startSecureSession();
+    $_SESSION = [];
+    session_destroy();
+}

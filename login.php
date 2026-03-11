@@ -1,100 +1,38 @@
 <?php
 // ============================================================
-//  EduQueue – Login Page
+//  EduQueue – Configuration
+//  On Railway: set these as environment variables in the dashboard.
+//  Locally: values fall back to the defaults shown after ?:
 // ============================================================
-require_once __DIR__ . '/config.php';
-require_once __DIR__ . '/includes/auth.php';
-require_once __DIR__ . '/includes/security.php';
 
-startSecureSession();
+// ── DATABASE ─────────────────────────────────────────────────
+define('DB_HOST', getenv('DB_HOST') ?: '127.0.0.1');
+define('DB_PORT', getenv('DB_PORT') ?: '3307');
+define('DB_NAME', getenv('DB_NAME') ?: 'eduqueue');
+define('DB_USER', getenv('DB_USER') ?: 'root');
+define('DB_PASS', getenv('DB_PASS') ?: '');
 
-// Already logged in — redirect based on role
-if (isset($_SESSION['user_id']) && !empty($_SESSION['user_role'])) {
-    $role = $_SESSION['user_role'];
-    if ($role === 'admin') { header('Location: ' . BASE_URL . '/admin/index.php'); exit; }
-    if ($role === 'staff') { header('Location: ' . BASE_URL . '/staff.php');       exit; }
-    header('Location: ' . BASE_URL . '/queue.php'); exit;
-}
+// ── APP ──────────────────────────────────────────────────────
+define('BASE_URL',      rtrim(getenv('BASE_URL') ?: 'http://localhost/techno', '/'));
+define('SCHOOL_NAME',   getenv('SCHOOL_NAME')   ?: 'Your School Name');
+define('SCHOOL_DOMAIN', getenv('SCHOOL_DOMAIN') ?: '@school.edu');
 
-$error         = '';
-$session_token = $_GET['session'] ?? '';
+// ── SMS (Semaphore) ───────────────────────────────────────────
+define('SEMAPHORE_API_KEY',     getenv('SEMAPHORE_API_KEY')     ?: '');
+define('SEMAPHORE_SENDER_NAME', getenv('SEMAPHORE_SENDER_NAME') ?: 'SCHOOLQ');
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    verifyCsrf();
+// ── reCAPTCHA v3 ─────────────────────────────────────────────
+define('RECAPTCHA_SITE_KEY',   getenv('RECAPTCHA_SITE_KEY')   ?: '');
+define('RECAPTCHA_SECRET_KEY', getenv('RECAPTCHA_SECRET_KEY') ?: '');
+define('RECAPTCHA_MIN_SCORE',  0.5);
 
-    $email    = sanitize($_POST['email']    ?? '');
-    $password = $_POST['password']          ?? '';
+// ── QUEUE SETTINGS ───────────────────────────────────────────
+define('SMS_NOTIFY_THRESHOLD', (int)(getenv('SMS_NOTIFY_THRESHOLD') ?: 3));
+define('MAX_CALL_ATTEMPTS',    (int)(getenv('MAX_CALL_ATTEMPTS')    ?: 3));
 
-    $result = loginUser($email, $password);
+// ── RATE LIMITING ─────────────────────────────────────────────
+define('RATE_LIMIT_ATTEMPTS', (int)(getenv('RATE_LIMIT_ATTEMPTS') ?: 3));
+define('RATE_LIMIT_MINUTES',  (int)(getenv('RATE_LIMIT_MINUTES')  ?: 10));
 
-    if ($result['success']) {
-        // Re-open session to read the role that was saved
-        session_start();
-
-        $role = $_SESSION['user_role'] ?? '';
-
-        if ($session_token) {
-            $_SESSION['qr_session_token'] = $session_token;
-        }
-
-        session_write_close();
-
-        if ($role === 'admin') { header('Location: ' . BASE_URL . '/admin/index.php'); exit; }
-        if ($role === 'staff') { header('Location: ' . BASE_URL . '/staff.php');       exit; }
-        header('Location: ' . BASE_URL . '/queue.php'); exit;
-    }
-
-    $error = $result['message'];
-}
-?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Login – <?= SCHOOL_NAME ?></title>
-<link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/style.css">
-</head>
-<body>
-<div class="login-wrap">
-  <div class="login-card">
-    <div class="login-logo">
-      <h1>Edu<span>Queue</span></h1>
-      <p><?= htmlspecialchars(SCHOOL_NAME) ?> &nbsp;·&nbsp; Inquiry Queue System</p>
-    </div>
-
-    <?php if ($error): ?>
-    <div class="alert alert-danger">⚠️ <?= htmlspecialchars($error) ?></div>
-    <?php endif; ?>
-
-    <form method="POST">
-      <?= csrfField() ?>
-      <?php if ($session_token): ?>
-      <input type="hidden" name="session" value="<?= htmlspecialchars($session_token) ?>">
-      <?php endif; ?>
-
-      <div class="form-group">
-        <label for="email">School Email</label>
-        <input class="form-control" type="email" id="email" name="email"
-               placeholder="yourid<?= SCHOOL_DOMAIN ?>"
-               value="<?= htmlspecialchars($_POST['email'] ?? '') ?>"
-               required autofocus>
-      </div>
-      <div class="form-group">
-        <label for="password">Password</label>
-        <input class="form-control" type="password" id="password" name="password"
-               placeholder="••••••••" required>
-      </div>
-
-      <button type="submit" class="btn btn-primary btn-full mt-2">Log In →</button>
-    </form>
-
-    <p class="text-center text-muted mt-2">
-      Don't have an account?
-      <a href="<?= BASE_URL ?>/register.php<?= $session_token ? '?session='.urlencode($session_token) : '' ?>"
-         style="color:var(--teal)">Register here</a>
-    </p>
-  </div>
-</div>
-</body>
-</html>
+// ── TIMEZONE ─────────────────────────────────────────────────
+date_default_timezone_set('Asia/Manila');

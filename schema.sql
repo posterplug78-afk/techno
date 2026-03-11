@@ -1,109 +1,52 @@
--- ============================================================
---  EduQueue – QR-Based Student Inquiry Queue Management System
---  Database Schema  (MySQL 8.x)
--- ============================================================
+<?php
+// ============================================================
+//  EduQueue – QR Landing Page
+//  URL: school.edu/eduqueue/?session=TOKEN
+// ============================================================
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/queue.php';
 
-CREATE DATABASE IF NOT EXISTS eduqueue CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE eduqueue;
+startSecureSession();
 
--- ── USERS ────────────────────────────────────────────────────
-CREATE TABLE users (
-    id            INT AUTO_INCREMENT PRIMARY KEY,
-    email         VARCHAR(100) NOT NULL UNIQUE,
-    full_name     VARCHAR(150) NOT NULL,
-    student_id    VARCHAR(20)  DEFAULT NULL,
-    role          ENUM('student','staff','admin') NOT NULL DEFAULT 'student',
-    password_hash VARCHAR(255) NOT NULL,
-    is_active     TINYINT(1)   NOT NULL DEFAULT 1,
-    created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
+$token   = trim($_GET['session'] ?? '');
+$session = $token ? getActiveSession($token) : null;
 
--- ── DEPARTMENTS ──────────────────────────────────────────────
-CREATE TABLE departments (
-    id                   INT AUTO_INCREMENT PRIMARY KEY,
-    name                 VARCHAR(100) NOT NULL,
-    prefix               CHAR(1)      NOT NULL UNIQUE,   -- R, C, A, G
-    assigned_staff_id    INT          DEFAULT NULL,
-    avg_service_minutes  INT          NOT NULL DEFAULT 3,
-    is_open              TINYINT(1)   NOT NULL DEFAULT 1,
-    FOREIGN KEY (assigned_staff_id) REFERENCES users(id) ON DELETE SET NULL
-);
+// If no token, redirect to today's session creator (admin use) or show error
+if (!$token) {
+    // Redirect to login which will pick up no session
+    header('Location: ' . BASE_URL . '/login.php');
+    exit;
+}
 
--- ── QUEUE SESSIONS (daily QR) ────────────────────────────────
-CREATE TABLE queue_sessions (
-    id             INT AUTO_INCREMENT PRIMARY KEY,
-    session_token  VARCHAR(64)  NOT NULL UNIQUE,
-    session_date   DATE         NOT NULL UNIQUE,
-    qr_image_path  VARCHAR(255) DEFAULT NULL,
-    is_active      TINYINT(1)   NOT NULL DEFAULT 1,
-    created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expires_at     DATETIME     NOT NULL
-);
+if (!$session) {
+    // Invalid or expired QR code
+    ?><!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Invalid QR – <?= SCHOOL_NAME ?></title>
+<link rel="stylesheet" href="<?= BASE_URL ?>/assets/css/style.css">
+</head>
+<body style="background:var(--navy);display:flex;align-items:center;justify-content:center;min-height:100vh;">
+<div style="background:#fff;border-radius:16px;padding:2.5rem;max-width:380px;text-align:center;box-shadow:0 16px 48px rgba(0,0,0,.25)">
+  <div style="font-size:3rem;margin-bottom:1rem">❌</div>
+  <h2 style="color:var(--navy);margin-bottom:.5rem">Invalid QR Code</h2>
+  <p style="color:var(--gray-500);font-size:.9rem">This QR code has expired or is no longer valid.<br>Please scan today's QR code posted at the office.</p>
+</div>
+</body></html>
+    <?php
+    exit;
+}
 
--- ── QUEUE COUNTERS (one row per dept, reset daily) ───────────
-CREATE TABLE queue_counters (
-    department_id    INT NOT NULL PRIMARY KEY,
-    session_id       INT NOT NULL,
-    last_issued      INT NOT NULL DEFAULT 0,
-    current_serving  INT NOT NULL DEFAULT 0,
-    FOREIGN KEY (department_id) REFERENCES departments(id),
-    FOREIGN KEY (session_id)    REFERENCES queue_sessions(id)
-);
+// Session valid — store token and redirect
+$_SESSION['qr_session_token'] = $token;
+$_SESSION['qr_session_id']    = $session['id'];
 
--- ── QUEUES (main) ────────────────────────────────────────────
-CREATE TABLE queues (
-    id             INT AUTO_INCREMENT PRIMARY KEY,
-    session_id     INT          NOT NULL,
-    student_id     INT          NOT NULL,
-    department_id  INT          NOT NULL,
-    queue_number   VARCHAR(10)  NOT NULL,
-    sequence       INT          NOT NULL,
-    purpose        TEXT         NOT NULL,
-    status         ENUM('waiting','serving','done','skipped','missed') NOT NULL DEFAULT 'waiting',
-    call_count     INT          NOT NULL DEFAULT 0,
-    joined_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    called_at      DATETIME     DEFAULT NULL,
-    served_at      DATETIME     DEFAULT NULL,
-    completed_at   DATETIME     DEFAULT NULL,
-    notified_sms   TINYINT(1)   NOT NULL DEFAULT 0,
-    sms_phone      VARCHAR(15)  DEFAULT NULL,
-    FOREIGN KEY (session_id)    REFERENCES queue_sessions(id),
-    FOREIGN KEY (student_id)    REFERENCES users(id),
-    FOREIGN KEY (department_id) REFERENCES departments(id)
-);
-
--- ── SMS LOGS ─────────────────────────────────────────────────
-CREATE TABLE sms_logs (
-    id        INT AUTO_INCREMENT PRIMARY KEY,
-    queue_id  INT          NOT NULL,
-    phone     VARCHAR(15)  NOT NULL,
-    message   TEXT         NOT NULL,
-    status    ENUM('sent','failed','pending') NOT NULL DEFAULT 'pending',
-    sent_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (queue_id) REFERENCES queues(id)
-);
-
--- ── RATE LIMITS ──────────────────────────────────────────────
-CREATE TABLE rate_limits (
-    id          INT AUTO_INCREMENT PRIMARY KEY,
-    ip          VARCHAR(45) NOT NULL,
-    action      VARCHAR(50) NOT NULL DEFAULT 'submit',
-    created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_ip_action (ip, action, created_at)
-);
-
--- ── SEED DATA ────────────────────────────────────────────────
-INSERT INTO departments (name, prefix, avg_service_minutes, is_open) VALUES
-  ('Registrar',  'R', 4, 1),
-  ('Cashier',    'C', 3, 1),
-  ('Admissions', 'A', 5, 1),
-  ('Guidance',   'G', 6, 1);
-
--- Default admin account  (password: Admin@1234)
-INSERT INTO users (email, full_name, role, password_hash) VALUES
-  ('admin@school.edu', 'System Admin', 'admin',
-   '$2y$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2uheWG/igi.'); -- bcrypt of "password" as placeholder
-
--- ─────────────────────────────────────────────────────────────
--- Change the admin password after first login!
--- ─────────────────────────────────────────────────────────────
+if (isLoggedIn() && $_SESSION['user_role'] === 'student') {
+    header('Location: ' . BASE_URL . '/queue.php');
+} else {
+    header('Location: ' . BASE_URL . '/login.php?session=' . urlencode($token));
+}
+exit;

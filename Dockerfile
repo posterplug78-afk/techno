@@ -1,15 +1,10 @@
-FROM php:8.2-apache
+# Never bake real credentials into the Docker image
+# On Railway, set these values as environment variables instead
+config.php
 
-# Enable Apache mod_rewrite
-RUN a2enmod rewrite
-
-# Install PHP extensions needed for MySQL
-RUN docker-php-ext-install pdo pdo_mysql mysqli
-
-# Copy all project files into the web server folder
-COPY . /var/www/html/
-
-# Set permissions
-RUN chown -R www-data:www-data /var/www/html
-
-EXPOSE 80
+# Git and editor files (not needed in production)
+.git
+.gitignore
+.gitignore.txt
+.qodo
+README.md
